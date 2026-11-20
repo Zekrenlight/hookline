@@ -1,0 +1,17 @@
+[package]
+name = "mod-hookline"
+version = "1.0.0"
+edition = "2024"
+license = "MIT"
+authors = ["Zekrenlight"]
+publish = false
+description = "Client-side AFK fishing helper for Sunrise: reels your own bobber, recasts, and uses ordinary client use-key and inventory-click actions to keep, toss, deposit, or eat on your terms."
+
+[lib]
+name = "hookline"
+path = "src/lib.rs"
+
+[dependencies]
+# The pinned SDK's API crate, fetched into .sunrise/sdk/ by any `cargo sunrise-mod` command.
+# Do not hardcode a SHA here. Bump the pin only in sunrise-mod.toml (see README).
+sunrise-mod-api = { path = ".sunrise/sdk/api/crates/sunrise-mod-api" }

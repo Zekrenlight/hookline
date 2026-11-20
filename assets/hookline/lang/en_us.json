@@ -1,0 +1,13 @@
+{
+  "hookline.key.toggle": "Turn Hookline on or off",
+  "hookline.key.panel": "Open the Hookline panel",
+  "hookline.setting.pace": "Pace variance (softer reel and recast timing)",
+  "hookline.setting.wander": "Look around and hop once a minute",
+  "hookline.setting.meals": "Eat from off-hand or hotbar until full",
+  "hookline.setting.worn_rod": "Switch or stop on a worn rod",
+  "hookline.setting.bail_hurt": "Leave the server below three hearts",
+  "hookline.setting.rest_after_lull": "Rest after five quiet minutes",
+  "hookline.setting.overlay": "Corner overlay",
+  "hookline.setting.accent": "Accent colour",
+  "hookline.setting.accent.tooltip": "The colour of Hookline's cards and highlights. Sunrise orange (#F9801D) by default."
+}
