@@ -8,6 +8,12 @@ This is a **client-side AFK fishing helper**. It drives ordinary client actions 
 
 This is an independent implementation of autofishing.
 
+<img width="919" height="636" alt="image" src="https://github.com/user-attachments/assets/6f76b98a-db80-4306-af1b-bd603116f41d" />
+<img width="919" height="636" alt="image" src="https://github.com/user-attachments/assets/ba02b446-3da5-40de-8435-56d0dfa0847a" />
+<img width="919" height="636" alt="image" src="https://github.com/user-attachments/assets/761afff7-6e8f-4bb1-a100-65c77a481100" />
+<img width="919" height="636" alt="image" src="https://github.com/user-attachments/assets/b027f09e-26b9-4c92-95ad-fe63bd785833" />
+
+
 ## Features
 
 - Toggle with **V**; open the panel with **O** (rebindable under Options > Controls). The toggle shows a short action-bar message.
