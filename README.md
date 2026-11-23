@@ -30,12 +30,6 @@ This is an independent implementation of autofishing.
 
 Habits also appear as toggles in Hookline's settings card (SunnyMods' **Settings** button, Sunrise's Mods list, or Options > Mods). The fishing panel itself opens with **O** or `/hookline panel`.
 
-## Screenshots
-
-<img width="1381" height="959" alt="image" src="https://github.com/user-attachments/assets/2f0dd17d-aae5-48d3-9899-e9a07fe06620" />
-<img width="1381" height="959" alt="image" src="https://github.com/user-attachments/assets/0bd11d12-4ce6-44bc-bcf7-b7e7f2268d8e" />
-<img width="1381" height="959" alt="image" src="https://github.com/user-attachments/assets/aa82d264-6917-449a-b1fc-1bd6ea71f41b" />
-<img width="1381" height="959" alt="image" src="https://github.com/user-attachments/assets/88e8c7d7-e675-436d-9970-95a92ae4a859" />
 
 ## Install (local `.smod`)
 
