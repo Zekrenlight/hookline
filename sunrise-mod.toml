@@ -1,6 +1,6 @@
 id = "hookline"
 name = "Hookline"
-version = "1.0.1"
+version = "1.0.2"
 description = "Client-side AFK fishing helper for Sunrise (Minecraft Java 26.3). It reels when your own bobber splashes, recasts, and can keep or toss catches, deposit kept catch into a chest or barrel, and eat from the off-hand or hotbar. It does this by driving ordinary client actions (the use key, hotbar selection, and inventory clicks), not by talking to the server through a custom protocol. Use only on servers and worlds where AFK fishing and this kind of automation are allowed."
 authors = ["Zekrenlight"]
 license = "MIT"
