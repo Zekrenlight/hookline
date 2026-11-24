@@ -42,10 +42,9 @@ pub trait HasHost {
     }
 
     fn native_mapping(&self, name: &str) -> Option<(bool, String)> {
-        match self.host().mapping(name) {
-            Ok(Some(m)) => Some((m.down, String::new())),
-            _ => None,
-        }
+        let mapping = self.host().vanilla_key_mapping(name).ok()?;
+        let down = mapping.is_down(self.host()).ok()?;
+        Some((down, String::new()))
     }
 
 
@@ -102,8 +101,7 @@ pub trait HasHost {
 
     fn offhand(&self) -> Option<Stack> {
         let living = local_living(self.host())?;
-        let stack = living.hand_item(self.host(), Hand::Off)?;
-        Some(to_stack(self.host(), &stack))
+        living.with_hand_item(self.host(), Hand::Off, |view| stack_from_view(self.host(), view))?
     }
 
     fn inventory(&self) -> Vec<Option<Stack>> {
@@ -139,7 +137,7 @@ pub trait HasHost {
         let Some(key) = level.block(self.host(), pos) else {
             return String::new();
         };
-        key.id(self.host())
+        key.id(self.host()).unwrap_or("").to_string()
     }
 
     fn max_damage(&self, item: &str) -> u32 {
@@ -250,15 +248,23 @@ impl<'a> Game<'a> {
     }
 
     pub fn set_right(&mut self, down: bool) {
-        let _ = self.host.set_mapping_down("key.use", down);
+        if let Ok(mapping) = self.host.vanilla_key_mapping("key.use") {
+            let _ = mapping.set_down(self.host, down);
+        }
     }
 
     pub fn click_use(&mut self) -> bool {
-        self.host.click_mapping("key.use").is_ok()
+        self.host
+            .vanilla_key_mapping("key.use")
+            .and_then(|mapping| mapping.click(self.host))
+            .is_ok()
     }
 
     pub fn click_jump(&mut self) -> bool {
-        self.host.click_mapping("key.jump").is_ok()
+        self.host
+            .vanilla_key_mapping("key.jump")
+            .and_then(|mapping| mapping.click(self.host))
+            .is_ok()
     }
 
 
@@ -293,7 +299,9 @@ impl<'a> Game<'a> {
     }
 
     pub fn start_using_item(&mut self, _hand: i32) {
-        let _ = self.host.set_mapping_down("key.use", true);
+        if let Ok(mapping) = self.host.vanilla_key_mapping("key.use") {
+            let _ = mapping.set_down(self.host, true);
+        }
         if self.using_ticks.is_none() {
             self.using_ticks = Some((40, 0));
         }
@@ -452,7 +460,7 @@ fn inv_to_menu(host: &dyn ClientHost, menu: MenuRef, inv: usize) -> usize {
 }
 
 fn to_stack(host: &dyn ClientHost, stack: &ItemStack) -> Stack {
-    let item = stack.item().id(host);
+    let item = stack.item().id(host).unwrap_or("").to_string();
     let count = stack.count();
     let damage = stack.damage();
     let charms = stack_enchantments(stack);
@@ -462,6 +470,11 @@ fn to_stack(host: &dyn ClientHost, stack: &ItemStack) -> Stack {
         damage,
         charms,
     }
+}
+
+
+fn stack_from_view(host: &dyn ClientHost, view: mod_api::ItemStackView<'_>) -> Option<Stack> {
+    Some(to_stack(host, &view.project()?))
 }
 
 fn inventory_of(host: &dyn ClientHost) -> Vec<Option<Stack>> {
@@ -485,18 +498,24 @@ fn inventory_of(host: &dyn ClientHost) -> Vec<Option<Stack>> {
         }
     }
     if let Some(player) = host.local_player() {
-        if let Some(stacks) = player.inventory(host) {
-            let sel = player.selected_slot(host).unwrap_or(0).min(8);
-            for (i, stack) in stacks.into_iter().take(36).enumerate() {
-                if i < slots.len() {
-                    slots[i] = Some(to_stack(host, &stack));
+        let _ = player.with_inventory(host, |view| {
+            for (slot, stack) in view.iter() {
+                let i = slot as usize;
+                if i < 36 && i < slots.len() {
+                    if let Some(converted) = stack_from_view(host, stack) {
+                        slots[i] = Some(converted);
+                    }
                 }
             }
-            if slots[sel].is_none() {
-                if let Some(living) = local_living(host) {
-                    if let Some(stack) = living.hand_item(host, Hand::Main) {
-                        slots[sel] = Some(to_stack(host, &stack));
-                    }
+        });
+        let sel = player.selected_slot(host).unwrap_or(0).min(8);
+        if slots[sel].is_none() {
+            if let Some(living) = local_living(host) {
+                if let Some(stack) = living
+                    .with_hand_item(host, Hand::Main, |view| stack_from_view(host, view))
+                    .flatten()
+                {
+                    slots[sel] = Some(stack);
                 }
             }
         }
@@ -538,13 +557,17 @@ fn hook_of(host: &dyn ClientHost) -> Option<Hook> {
     let reach = 64.0;
     let min = [pos[0] - reach, pos[1] - reach, pos[2] - reach];
     let max = [pos[0] + reach, pos[1] + reach, pos[2] + reach];
-    let ents = level.entities_in(host, min, max).unwrap_or_default();
+    let mut ents = Vec::new();
+    let _ = level.visit_entities_in(host, min, max, &mut |entity| {
+        ents.push(entity);
+        core::ops::ControlFlow::Continue(())
+    });
     // fishing_hook() is a server-host method in this API pin and refuses on a
     // client. Identify bobbers by entity type instead and take the nearest.
     let mut nearest: Option<(f64, [f64; 3])> = None;
     for entity in ents {
         let Some(kind) = entity.kind(host) else { continue };
-        if kind.id(host) != "minecraft:fishing_bobber" {
+        if kind.id(host).as_deref() != Some("minecraft:fishing_bobber") {
             continue;
         }
         let Some(p) = entity.position(host) else { continue };

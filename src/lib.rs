@@ -16,12 +16,12 @@ pub use logic::listing;
 
 use crate::world::{Game, HasHost, View};
 use mod_api::{
-    ClientHost, ClientTickPreEvent, CommandEvent, Flow, GuiLayer, GuiLayerDrawEvent,
-    GuiLayerPlacement, HostSide, Hooks, Identifier, KeyRegistration, PlayLevelSoundAtEntityEvent,
-    PlayLevelSoundAtPositionEvent, RegisterGuiLayersEvent, Registrar, RegistrationContext,
-    ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent,
-    ScreenMouseButtonReleasedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenRenderPostEvent, SettingChangedEvent, SettingSpec,
+    ClientHost, ClientTickPreEvent, CommandEvent, Flow, GuiLayerPlacement, HostSide, Hooks,
+    Identifier, KeyRegistration, PlayLevelSoundAtEntityEvent, PlayLevelSoundAtPositionEvent,
+    RegisterGuiLayersEvent, Registrar, RegistrationContext, ScreenCharTypedPreEvent,
+    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
+    ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
+    SettingChangedEvent, SettingSpec,
 };
 
 const OVERLAY_LAYER: &str = "hookline:overlay";
@@ -67,23 +67,19 @@ impl Hooks for Hookline {
         _context: &RegistrationContext,
         event: &mut RegisterGuiLayersEvent<'_>,
     ) {
-        event.layers.push(GuiLayer {
-            id: OVERLAY_LAYER.into(),
-            placement: GuiLayerPlacement::Above("minecraft:overlay_message".into()),
-        });
-    }
-
-    fn gui_layer_draw(&self, host: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'_>) {
-        if event.layer != OVERLAY_LAYER {
-            return;
-        }
-        let game = View::new(host);
-        if !game.native_on() {
-            return;
-        }
-        if let Some(line) = session::overlay_line() {
-            event.draw.text(&line, [4.0, 4.0], 0xFFE8DCC8, true);
-        }
+        let _ = event.layers.register(
+            OVERLAY_LAYER.into(),
+            GuiLayerPlacement::Above("minecraft:overlay_message".into()),
+            Box::new(|host, draw| {
+                let game = View::new(host);
+                if !game.native_on() {
+                    return;
+                }
+                if let Some(line) = session::overlay_line() {
+                    draw.text(&line, [4.0, 4.0], 0xFFE8DCC8, true);
+                }
+            }),
+        );
     }
 
     fn client_tick_pre(&self, host: &mut dyn ClientHost, _event: &mut ClientTickPreEvent) {
@@ -96,8 +92,8 @@ impl Hooks for Hookline {
             session::revise(session::tick_flash);
         }
         let playing = host.playing();
-        let flip = playing && host.consume_click(session::MOD_ID, "toggle");
-        let panel = playing && host.consume_click(session::MOD_ID, "panel");
+        let flip = playing && consume_mod_click(host, session::MOD_ID, "toggle");
+        let panel = playing && consume_mod_click(host, session::MOD_ID, "panel");
         let mut game = Game::new(host);
         if flip {
             session::flip_from_key(&mut game);
@@ -230,6 +226,13 @@ impl Hooks for Hookline {
             session::write_prefs(&game, s);
         });
     }
+}
+
+
+fn consume_mod_click(host: &mut dyn ClientHost, owner: &str, id: &str) -> bool {
+    host.mod_key_mapping(owner, id)
+        .and_then(|mapping| mapping.consume_click(host))
+        .unwrap_or(false)
 }
 
 fn cancel_if(handled: bool, event: &mut impl Cancel) -> Flow {
