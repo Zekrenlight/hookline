@@ -2,7 +2,9 @@
 // Rules live in `logic`; this file only talks to the game through `world::Game`.
 
 use crate::logic as rules;
-use crate::world::{Game, HasHost};
+use crate::world::{self, Game, HasHost};
+use mod_api::Host;
+use std::sync::atomic::{AtomicBool, Ordering};
 use rules::{
     ballots_for, bite_from_splash, default_toss_set, dump_prefs, hunger_needs_food, is_fish,
     is_rod, is_treasure, load_prefs, may_press_use, pick_food_origin, recast_pause, should_stow,
@@ -21,6 +23,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 pub const MOD_ID: &str = "hookline";
+static NATIVE_DIRTY: AtomicBool = AtomicBool::new(false);
+
 pub const HABITS: &[(&str, &str)] = &[
     ("pace", "Pace variance (softer reel and recast timing)"),
     ("wander", "Look around and hop once a minute"),
@@ -201,10 +205,31 @@ pub fn write_prefs(game: &impl HasHost, s: &mut Session) {
     game.write_config(FILE_NAME, &dump_prefs(&s.prefs));
 }
 
+pub fn write_prefs_host(host: &dyn Host, s: &mut Session) {
+    s.prefs.format = s.prefs.format.max(FORMAT);
+    world::write_config_host(host, FILE_NAME, &dump_prefs(&s.prefs));
+}
+
 pub fn write_prefs_and_native(game: &impl HasHost, s: &mut Session) {
     write_prefs(game, s);
-    for (key, _) in HABITS {
-        game.native_set_setting(MOD_ID, key, yes_no(habit_on(s, key)));
+    // Screen hooks only lend `&dyn ClientHost`, so the Options write happens
+    // on the next tick from `apply_native_settings`.
+    NATIVE_DIRTY.store(true, Ordering::Relaxed);
+}
+
+/// Push habit toggles to Options when the panel or a command changed them.
+pub fn apply_native_settings(game: &mut Game<'_>) {
+    if !NATIVE_DIRTY.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let updates: Vec<(&str, String)> = revise(|s| {
+        HABITS
+            .iter()
+            .map(|(key, _)| (*key, yes_no(habit_on(s, key)).to_string()))
+            .collect()
+    });
+    for (key, val) in updates {
+        game.native_set_setting(MOD_ID, key, &val);
     }
 }
 
@@ -230,6 +255,27 @@ pub fn ensure_ready(game: &impl HasHost) {
     });
 }
 
+pub fn ensure_ready_host(host: &dyn Host) {
+    let needed = revise(|s| !s.ready);
+    if !needed {
+        return;
+    }
+    let text = world::read_config_host(host, FILE_NAME);
+    let (mut prefs, file_keys) = load_prefs(&text);
+    let mut native = HashMap::new();
+    for (key, _) in HABITS {
+        if let Some(v) = world::native_setting_host(host, key) {
+            native.insert((*key).to_string(), v);
+        }
+    }
+    apply_native_overlay(&mut prefs, &native, &file_keys);
+    prefs.format = prefs.format.max(FORMAT);
+    revise(|s| {
+        s.prefs = prefs;
+        s.ready = true;
+        write_prefs_host(host, s);
+    });
+}
 
 pub fn mark_activity(s: &mut Session) {
     s.lull = 0;

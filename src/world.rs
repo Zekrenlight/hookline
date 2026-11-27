@@ -4,11 +4,96 @@
 //! and talks to Sunrise through `ClientHost` only. No mixin, no raw play packets.
 
 use mod_api::{
-    ClientHost, ConfigPath, DrawContext, EquipmentSlot, Hand, Identifier, ItemKey, ItemStack,
-    JavaString, LivingRef, MenuClick, MenuRef, PlayerRef, SoundPlay, SoundSource, Tag,
+    ClientHost, DrawContext, EquipmentSlot, Hand, Host, Identifier, ItemKey, ItemStack,
+    JavaString, LivingRef, MenuClick, MenuRef, PlayerRef, SettingKey, SettingValue, SoundPlay,
+    SoundSource, Tag,
 };
+use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const MOD_ID: &str = "hookline";
+
+/// Keys captured when the settings were registered, so later reads and writes
+/// can use the owner-bound `SettingKey` type.
+pub struct SettingKeys {
+    pub pace: Option<SettingKey>,
+    pub wander: Option<SettingKey>,
+    pub meals: Option<SettingKey>,
+    pub worn_rod: Option<SettingKey>,
+    pub bail_hurt: Option<SettingKey>,
+    pub rest_after_lull: Option<SettingKey>,
+    pub overlay: Option<SettingKey>,
+    pub accent: Option<SettingKey>,
+}
+
+impl SettingKeys {
+    /// The key for a habit toggle, if that habit was registered.
+    pub fn habit(&self, key: &str) -> Option<SettingKey> {
+        match key {
+            "pace" => self.pace,
+            "wander" => self.wander,
+            "meals" => self.meals,
+            "worn_rod" => self.worn_rod,
+            "bail_hurt" => self.bail_hurt,
+            "rest_after_lull" => self.rest_after_lull,
+            "overlay" => self.overlay,
+            _ => None,
+        }
+    }
+}
+
+pub static SETTING_KEYS: OnceLock<SettingKeys> = OnceLock::new();
+
+fn data_root(host: &dyn Host) -> PathBuf {
+    host.instance_dir().join("sunrise-mod-data").join(MOD_ID)
+}
+
+/// Join `file` under the mod data folder, refusing absolute paths and `..`.
+fn safe_join(root: &Path, file: &str) -> Option<PathBuf> {
+    if file.is_empty() || file.contains('\u{0}') {
+        return None;
+    }
+    let mut out = root.to_path_buf();
+    for c in Path::new(file).components() {
+        match c {
+            Component::Normal(part) => out.push(part),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    out.starts_with(root).then_some(out)
+}
+
+pub fn write_config_host(host: &dyn Host, file: &str, text: &str) {
+    let Some(path) = safe_join(&data_root(host), file) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, text.as_bytes());
+}
+
+pub fn read_config_host(host: &dyn Host, file: &str) -> String {
+    let Some(path) = safe_join(&data_root(host), file) else {
+        return String::new();
+    };
+    std::fs::read(path)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_default()
+}
+
+pub fn native_setting_host(host: &dyn Host, key: &str) -> Option<String> {
+    let k = SETTING_KEYS.get()?.habit(key)?;
+    host.setting_bool(k).ok().map(|on| {
+        if on {
+            "yes".into()
+        } else {
+            "no".into()
+        }
+    })
+}
 
 /// Shared read surface for `&dyn ClientHost` and `&mut dyn ClientHost` wrappers.
 pub trait HasHost {
@@ -28,17 +113,7 @@ pub trait HasHost {
     }
 
     fn native_setting(&self, _mod_id: &str, key: &str) -> Option<String> {
-        self.host().setting_bool(key).map(|on| {
-            if on {
-                "yes".into()
-            } else {
-                "no".into()
-            }
-        })
-    }
-
-    fn native_set_setting(&self, mod_id: &str, key: &str, value: &str) {
-        self.host().set_setting(mod_id, key, value);
+        native_setting_host(self.host(), key)
     }
 
     fn native_mapping(&self, name: &str) -> Option<(bool, String)> {
@@ -49,21 +124,11 @@ pub trait HasHost {
 
 
     fn write_config(&self, file: &str, text: &str) {
-        if let Ok(path) = ConfigPath::new(file) {
-            let _ = self.host().data_files().write(&path, text.as_bytes());
-        }
+        write_config_host(self.host(), file, text);
     }
 
     fn read_config(&self, file: &str) -> String {
-        let Ok(path) = ConfigPath::new(file) else {
-            return String::new();
-        };
-        self.host()
-            .data_files()
-            .read(&path)
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default()
+        read_config_host(self.host(), file)
     }
 
     fn native_play_local_sound(
@@ -218,6 +283,15 @@ impl<'a> Game<'a> {
 
     pub fn native_mod_screen_close(&mut self, mod_id: &str) {
         self.host.mod_screen_close(mod_id)
+    }
+
+    /// Write a habit toggle so Options > Mods stays in step with the panel and commands.
+    pub fn native_set_setting(&mut self, _mod_id: &str, key: &str, value: &str) {
+        let Some(k) = SETTING_KEYS.get().and_then(|s| s.habit(key)) else {
+            return;
+        };
+        let on = matches!(value, "yes" | "true" | "on" | "1");
+        let _ = self.host.set_setting(k, SettingValue::Toggle(on));
     }
 
     pub fn native_chat(&mut self, text: &str) {

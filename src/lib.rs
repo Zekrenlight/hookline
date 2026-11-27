@@ -15,13 +15,15 @@ pub use logic::*;
 pub use logic::listing;
 
 use crate::world::{Game, HasHost, View};
+use crate::world::SETTING_KEYS;
 use mod_api::{
-    ClientHost, ClientTickPreEvent, CommandEvent, Flow, GuiLayerPlacement, HostSide, Hooks,
-    Identifier, KeyRegistration, PlayLevelSoundAtEntityEvent, PlayLevelSoundAtPositionEvent,
-    RegisterGuiLayersEvent, Registrar, RegistrationContext, ScreenCharTypedPreEvent,
-    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
+    ClientHost, ClientTickPreEvent, Command, CommandArgumentValue, Flow, GuiLayerPlacement, Host,
+    HostSide, Hooks, Identifier, KeyRegistration, PlayLevelSoundAtEntityEvent,
+    PlayLevelSoundAtPositionEvent, RegisterClientCommandsEvent, RegisterGuiLayersEvent, Registrar,
+    RegistrationContext, ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent,
+    ScreenMouseButtonPressedPreEvent, ScreenMouseButtonReleasedPreEvent,
     ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent, ScreenRenderPostEvent,
-    SettingChangedEvent, SettingSpec,
+    SettingChangedEvent, SettingKey, SettingSpec, SettingValue,
 };
 
 const OVERLAY_LAYER: &str = "hookline:overlay";
@@ -40,6 +42,7 @@ impl Hooks for Hookline {
         );
         // Defaults match Prefs::default(). SettingKind has no button, so opening
         // the panel stays a keybind or `/hookline panel` (not an Options click).
+        let mut habit = std::collections::HashMap::<&str, Option<SettingKey>>::new();
         for (key, default) in [
             ("pace", true),
             ("wander", false),
@@ -49,16 +52,60 @@ impl Hooks for Hookline {
             ("rest_after_lull", true),
             ("overlay", false),
         ] {
-            let _ = registrar.register_setting(SettingSpec::toggle(
-                key,
-                format!("hookline.setting.{key}"),
-                default,
-            ));
+            let k = registrar
+                .register_setting(SettingSpec::toggle(
+                    key,
+                    format!("hookline.setting.{key}"),
+                    default,
+                ))
+                .ok();
+            habit.insert(key, k);
         }
         // The accent colour of hookline's cards (Sunrise orange by default).
-        let _ = registrar.register_setting(
-            mod_api::SettingSpec::color("accent", "hookline.setting.accent", 0xF9801D)
-                .tooltip("hookline.setting.accent.tooltip"),
+        let accent = registrar
+            .register_setting(
+                mod_api::SettingSpec::color("accent", "hookline.setting.accent", 0xF9801D)
+                    .tooltip("hookline.setting.accent.tooltip"),
+            )
+            .ok();
+        let _ = SETTING_KEYS.set(crate::world::SettingKeys {
+            pace: habit.get("pace").copied().flatten(),
+            wander: habit.get("wander").copied().flatten(),
+            meals: habit.get("meals").copied().flatten(),
+            worn_rod: habit.get("worn_rod").copied().flatten(),
+            bail_hurt: habit.get("bail_hurt").copied().flatten(),
+            rest_after_lull: habit.get("rest_after_lull").copied().flatten(),
+            overlay: habit.get("overlay").copied().flatten(),
+            accent,
+        });
+    }
+
+    fn register_client_commands(
+        &self,
+        _host: &mut dyn ClientHost,
+        event: &mut RegisterClientCommandsEvent<'_>,
+    ) {
+        event.commands.push(
+            Command::new("hookline [sub:text]").executes_client(|host, inv| {
+                let rest = match inv.argument("sub") {
+                    Some(CommandArgumentValue::String(s)) => s.clone(),
+                    _ => String::new(),
+                };
+                let mut game = Game::new(host);
+                if !game.native_on() {
+                    return Some(0);
+                }
+                session::ensure_ready(&game);
+                let mut ran = false;
+                let cmd = if rest.is_empty() {
+                    "hookline".to_string()
+                } else {
+                    format!("hookline {rest}")
+                };
+                session::handle_command(&mut game, &cmd, &mut ran);
+                session::apply_native_settings(&mut game);
+                Some(if ran { 1 } else { 0 })
+            }),
         );
     }
 
@@ -106,6 +153,7 @@ impl Hooks for Hookline {
             }
         }
         session::drive_tick(&mut game);
+        session::apply_native_settings(&mut game);
         crate::panel::close_if_asked(&mut game);
     }
 
@@ -132,21 +180,6 @@ impl Hooks for Hookline {
         Flow::Continue
     }
 
-    fn command(&self, host: &mut dyn ClientHost, event: &mut CommandEvent<'_>) -> Flow {
-        let mut game = Game::new(host);
-        if !game.native_on() {
-            return Flow::Continue;
-        }
-        session::ensure_ready(&game);
-        let mut ran = false;
-        session::handle_command(&mut game, event.command, &mut ran);
-        if ran {
-            event.cancelled = true;
-            Flow::Cancel
-        } else {
-            Flow::Continue
-        }
-    }
 
     fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
         let game = View::new(host);
@@ -154,7 +187,13 @@ impl Hooks for Hookline {
             return;
         }
         session::ensure_ready(&game);
-        crate::panel::set_accent(host.setting_color("accent").unwrap_or(0xF9801D));
+        crate::panel::set_accent(
+            SETTING_KEYS
+                .get()
+                .and_then(|k| k.accent)
+                .and_then(|k| host.setting_color(k).ok())
+                .unwrap_or(0xF9801D),
+        );
         crate::panel::paint(&game, event.draw, event.screen);
     }
 
@@ -212,18 +251,24 @@ impl Hooks for Hookline {
         cancel_if(panel::typed(&game, event.screen, event.c), event)
     }
 
-    fn setting_changed(&self, host: &mut dyn ClientHost, event: &mut SettingChangedEvent<'_>) {
+    fn setting_changed(&self, host: &dyn Host, event: &mut SettingChangedEvent<'_>) {
         if event.mod_id != session::MOD_ID {
             return;
         }
-        let game = Game::new(host);
-        session::ensure_ready(&game);
+        if event.key == "accent" {
+            if let SettingValue::Color(rgb) = event.value {
+                crate::panel::set_accent(rgb);
+            }
+            return;
+        }
+        // Load the file first if this is the first notice, using Host I/O only
+        // (this hook no longer lends a client host).
+        session::ensure_ready_host(host);
         session::revise(|s| {
-            if let Some(v) = game.native_setting(session::MOD_ID, event.key) {
-                let on = matches!(v.as_str(), "yes" | "true" | "on" | "1");
+            if let SettingValue::Toggle(on) = event.value {
                 session::set_habit(s, event.key, on);
             }
-            session::write_prefs(&game, s);
+            session::write_prefs_host(host, s);
         });
     }
 }
